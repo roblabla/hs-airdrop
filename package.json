@@ -28,7 +28,8 @@
     "brq": "~0.1.8",
     "bsert": "~0.0.10",
     "bufio": "~1.0.7",
-    "goosig": "~0.10.0"
+    "goosig": "~0.10.0",
+    "openpgp-smartcard": "file:../openpgp-smartcard"
   },
   "devDependencies": {
     "bmocha": "^2.1.5"

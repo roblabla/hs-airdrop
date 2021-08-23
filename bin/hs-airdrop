@@ -8,6 +8,7 @@ const fs = require('bfile');
 const request = require('brq');
 const Path = require('path');
 const bio = require('bufio');
+const openpgpcard = require('openpgp-card');
 const pgp = require('bcrypto/lib/pgp');
 const ssh = require('bcrypto/lib/ssh');
 const bech32 = require('bcrypto/lib/encoding/bech32');
@@ -64,6 +65,7 @@ const HELP = `
 
   Usage: $ hs-airdrop [key-file] [id] [addr] [options]
          $ hs-airdrop [key-file] [addr] [options]
+         $ hs-airdrop [card-id] [addr] [options]
          $ hs-airdrop [addr]
 
   Options:
@@ -72,6 +74,7 @@ const HELP = `
     -b, --bare            redeem airdrop publicly (i.e. without goosig)
     -f, --fee <amount>    set fee for redemption (default: 0.1 HNS)
     -d, --data <path>     data directory for cache (default: ~/.hs-tree-data)
+    --card-id             Specify that we have a card-id instead of a key-file
     -h, --help            output usage information
 
   [key-file] can be:
@@ -79,6 +82,8 @@ const HELP = `
     - An SSH private key file.
     - An exported PGP armor keyring (.asc).
     - An exported PGP raw keyring (.pgp/.gpg).
+
+  [card-id] is the ID of an OpenPGP smartcard (such as a yubikey).
 
   [id] is only necessary for PGP keys.
 
@@ -542,12 +547,21 @@ async function readKey(file, keyID) {
     default: {
       const str = data.toString('utf8');
       const passphrase = await readPassphrase();
-      const key = SSHPrivateKey.fromString(str, passphrase);
-      return {
-        type: 'ssh',
-        pub: AirdropKey.fromSSH(key),
-        priv: key
-      };
+      try {
+        const key = SSHPrivateKey.fromString(str, passphrase);
+        return {
+          type: 'ssh',
+          pub: AirdropKey.fromSSH(key),
+          priv: key
+        };
+      } catch(e) {
+        const key = SSHPublicKey.fromString(str);
+        return {
+          type: 'ssh',
+          pub: AirdropKey.fromSSH(key),
+          priv: key
+        }
+      }
     }
   }
 }
@@ -625,7 +639,8 @@ async function parseArgs() {
     addr: null,
     fee: 1e5,
     version: 0,
-    hash: null
+    hash: null,
+    smartcard: false,
   };
 
   const args = getArgs(process.argv);
@@ -677,6 +692,11 @@ async function parseArgs() {
         break;
       }
 
+      case '--card-id': {
+        options.smartcard = true;
+        break;
+      }
+
       case '-h':
       case '--help': {
         process.stdout.write(HELP + '\n');
@@ -700,6 +720,22 @@ async function parseArgs() {
                   + 'Try hs-airdrop --help.');
   }
 
+  if (options.smartcard) {
+    const [id, addr] = options.files;
+
+    const card = openpgpcard.smartcard_open(id);
+    const pubkey = openpgpcard.smartcard_get_pub_key(card);
+    const key = SSHPublicKey.fromString(str, passphrase);
+
+    options.type = 'ssh';
+    options.key = {
+      type: 'ssh',
+      pub: AirdropKey.fromSSH(key),
+      priv: card
+    };
+    options.addr = addr;
+
+  } else {
   options.type = getType(options.files[0]);
 
   switch (options.type) {
@@ -744,6 +780,7 @@ async function parseArgs() {
     default: {
       throw new assert.AssertionError('Invalid key type.');
     }
+  }
   }
 
   [options.version, options.hash] = parseAddress(options.addr);
